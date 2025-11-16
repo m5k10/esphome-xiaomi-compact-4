@@ -1,11 +1,6 @@
 ## About
 
 This project uses standard ESPHome components to replace original Xiaomi firmware.
-Missing features and known problems:
-- child lock support
-- filter status
-- sound notifications
-- motor spinning during startup
 
 ## How to use
 
