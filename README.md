@@ -27,8 +27,10 @@ wifi:
 
 ### Flashing
 The device contains an ESP32-WROOM-32D module on the main PCB.
-1. To replace original firmware, you need to disassemble the device and connect serial adapter to the pins next to ESP32.
-The pins are labeled so there should be no problem finding TX, RX, GND and GPIO0. 
+1. To replace original firmware, you need to disassemble the device and connect serial adapter to the pins next to ESP32:
+
+![Serial port](resources/serial.jpg)
+
 To activate the bootloader mode, you need to short GPIO0 to the GND while powering up the device.
 2. Backup your original firmware in case you need to restore it:
 ```shell
