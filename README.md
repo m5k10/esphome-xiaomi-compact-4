@@ -20,7 +20,6 @@ esphome:
   friendly_name: Xiaomi Compact 4
 
 wifi:
-  id: wifiClient
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 ```
