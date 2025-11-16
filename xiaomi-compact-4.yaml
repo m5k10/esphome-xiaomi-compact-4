@@ -1,13 +1,9 @@
 esphome:
   on_boot: 
     then:
-      - output.turn_on: motorPwmOutput
-      - output.set_level:
-          id: motorPwmOutput
-          level: 50%
-      - switch.turn_on: motorEn      
+      - switch.turn_on: motorEn
       - lambda: |-
-          id(devEnabled).publish_state(false);    
+          id(devEnabled).publish_state(false);
 
 esp32:
   variant: ESP32
@@ -18,10 +14,11 @@ esp32:
     sdkconfig_options:
       CONFIG_FREERTOS_UNICORE: y
     advanced:
-      ignore_efuse_mac_crc: true
-      ignore_efuse_custom_mac: true
+      ignore_efuse_mac_crc: True
+      ignore_efuse_custom_mac: True
 
 wifi:
+  id: wifiClient
   on_connect: 
     then:
       - lambda: |-
@@ -104,14 +101,6 @@ switch:
     on_state: 
       then: 
         - script.execute: hidUpdate
-  - platform: template
-    id: replaceFilter
-    name: "Replace Filter"
-    optimistic: True
-    icon: mdi:filter-off
-    on_state: 
-      then: 
-        - script.execute: hidUpdate        
   - platform: gpio
     pin: GPIO2
     id: motorEn
@@ -128,8 +117,24 @@ switch:
       - wifi.enable          
     turn_off_action:
       - wifi.disable
-
+  - platform: template
+    id: devEnabled
+    name: "Power"
+    icon: mdi:power
+    optimistic: True
+    on_state: 
+      then: 
+        - script.execute: hidUpdate
+        - script.execute: motorUpdate
+    
 interval:
+  - interval: 60s
+    id: updateFilterUsage
+    then:
+      - lambda: |-
+          if(id(devEnabled).state){
+            id(filterUsageState) += 60;
+          }          
   - interval: 30s
     then: 
       - uart.write: 
@@ -185,18 +190,52 @@ binary_sensor:
       inverted: True
     name: "HID Change Mode Button"
     internal: True
+    id: gpio_5
     on_click:
       - max_length: 1s
         then:
           - if: 
               condition:
                 lambda: "return id(devEnabled).state;"
-              then:
-                - select.next: devMode
-      - min_length: 7s
-        max_length: 14s          
-        then:
-          - lambda: "id(childLock).publish_state(true);"                      
+              then:                      
+                - if: 
+                    condition:
+                      lambda: "return id(childLock).state;"
+                    then:
+                      - script.execute: childLockNotification
+                    else:
+                      - select.next: devMode
+                      - if:
+                          condition:
+                            lambda: "return id(brightness).state == \"ZERO\";"
+                          then:
+                            - select.set:
+                                id: brightness
+                                option: 'MID'
+
+    on_press:
+      - globals.set: 
+          id: longPressEndModeButton
+          value: !lambda |-
+            return millis()+7000;
+      - while:
+          condition:
+            lambda: "return id(gpio_5).state && id(longPressEndModeButton) > 0;"
+          then:
+            - if: 
+                condition:
+                  lambda: "return id(longPressEndModeButton) < millis();"
+                then:
+                  - switch.template.publish:
+                      id: childLock
+                      state: !lambda 'return !id(childLock).state;'
+                  - globals.set: 
+                      id: longPressEndModeButton
+                      value: '0'            
+                  - script.execute: childLockNotification
+                else:
+                  - delay: 100ms
+
   - platform: gpio
     pin: 
       number: GPIO18
@@ -208,9 +247,16 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: "return id(devEnabled).state;"
+                lambda: |-
+                  return id(devEnabled).state;
               then:
-                - select.next: brightness
+                - if: 
+                    condition:
+                      lambda: "return id(childLock).state;"
+                    then:
+                      - script.execute: childLockNotification
+                    else:
+                      - select.next: brightness
   - platform: gpio
     pin: 
       number: GPIO19
@@ -220,10 +266,15 @@ binary_sensor:
     on_click: 
       - max_length: 1s
         then: 
-        - lambda: |-
-            auto enabled = id(devEnabled).state;
-            id(devEnabled).publish_state(!enabled);            
-            
+          - if:
+              condition: 
+                lambda: "return id(childLock).state;"
+              then:
+                - script.execute: childLockNotification
+              else:
+                - lambda: |-
+                    auto enabled = id(devEnabled).state;
+                    id(devEnabled).publish_state(!enabled);                                          
   - platform: template
     id: hidChildLock
     name: "HID Child Lock Active"
@@ -277,13 +328,14 @@ binary_sensor:
       then: 
         - script.execute: hidUpdate
   - platform: template
-    id: devEnabled
-    name: "Device Enabled"
-    internal: True
+    id: replaceFilter
+    name: "Replace Filter"
+    icon: mdi:filter-off
+    lambda: |-
+      return id(filterLifespan).state * 24 * 3600 < id(filterUsage).state;
     on_state: 
       then: 
         - script.execute: hidUpdate
-        - script.execute: motorUpdate
 sensor:
   - platform: template
     name: "PM 2.5"
@@ -293,7 +345,7 @@ sensor:
     accuracy_decimals: 0
     on_value: 
       then:
-        - script.execute: hidUpdate                        
+        - script.execute: hidUpdate
         - script.execute: motorUpdate
 
   - platform: template
@@ -316,15 +368,30 @@ sensor:
     accuracy_decimals: 0
     filters:
       - lambda: |-
-          return x / 60.0f;
+          return x / 15.0f;
+  - platform: template
+    id: filterUsage
+    name: "Filter Usage"
+    accuracy_decimals: 0
+    device_class: duration
+    unit_of_measurement: 's'
+    lambda: |-
+      return id(filterUsageState);
+  - platform: template
+    id: filterHealth
+    name: "Filter Health"
+    accuracy_decimals: 0
+    state_class: measurement
+    unit_of_measurement: '%'
+    lambda: |-
+      return 100.0f - 100.0f * id(filterUsage).state / (id(filterLifespan).state * 24 * 60 * 60);
 
 select:
   - platform: template
     name: "HID Mode"
     id: hidMode
-    optimistic: true
+    optimistic: True
     internal: True
-    icon: mdi:brightness-5
     options:
       - FAV
       - NIGHT
@@ -354,7 +421,7 @@ select:
   - platform: template
     name: "Mode"
     id: devMode
-    optimistic: true
+    optimistic: True
     icon: mdi:menu
     options:
       - FAV
@@ -370,7 +437,7 @@ select:
   - platform: template
     name: "Brightness"
     id: brightness
-    optimistic: true
+    optimistic: True
     icon: mdi:white-balance-sunny
     options:
       - FULL
@@ -379,7 +446,7 @@ select:
     initial_option: FULL
     on_value: 
       then:
-        - script.execute: hidUpdate  
+        - script.execute: hidUpdate
 
 output:
   - platform: ledc
@@ -398,7 +465,6 @@ output:
     pin: 
       number: GPIO26      
     id: motorPwmOutput
-    frequency: 300Hz
 
 light:
   - platform: monochromatic
@@ -411,36 +477,16 @@ light:
     output: RGB_Green
     id: StatusGreen
 
-number:
-  - platform: template
-    id: motorSetpoint
-    name: "Motor Setpoint"
-    min_value: 100
-    max_value: 700
-    step: 10
-    initial_value: 300
-    unit_of_measurement: "Hz"
-    optimistic: True
-    internal: True
-    on_value:
-      - output.ledc.set_frequency:
-          id: motorPwmOutput
-          frequency: !lambda "return x;"      
-  - platform: template
-    id: motorSpeed
-    name: "Motor Speed"
-    min_value: 0
-    max_value: 100
-    unit_of_measurement: '%'
-    icon: mdi:speedometer
-    step: 1
-    initial_value: 30
-    optimistic: True
-    internal: True
-    on_value:
-      - number.set: 
-          id: motorSetpoint
-          value: !lambda return x*6 + 100;
+globals:
+  - id: filterUsageState
+    type: uint32_t
+    restore_value: yes               # <-- load from flash on boot
+    initial_value: '0'    
+  - id: longPressEndModeButton
+    type: uint32_t
+    initial_value: '0'    
+
+number:  
   - platform: template
     id: motorSpeedFav
     name: "Motor Speed Favorite Mode"
@@ -496,7 +542,18 @@ number:
             lvl = 0;
           }        
           id(cmdHidBrightness).write_bytes((lvl<<4) | 0x01, 0, 0);
-
+  - platform: template
+    id: filterLifespan
+    name: "Filter Lifespan"
+    min_value: 30
+    max_value: 1000
+    step: 1
+    initial_value: 365
+    restore_value: True
+    optimistic: True
+    unit_of_measurement: "days"
+    device_class: duration
+    entity_category: config    
 script:
   - id: hidUpdate
     then:
@@ -519,7 +576,7 @@ script:
           id(hidBacklightBrightnessChangeButton).publish_state(!disableHid);
           id(hidBacklightOnOffButton).publish_state(true);
           id(hidMode).make_call().set_option(disableHid ? "TURNOFF" : id(devMode).state ).perform();
-          id(hidChildLock).publish_state(disableHid ? false : bool(id(childLock).state));
+          id(hidChildLock).publish_state(bool(id(childLock).state));
           id(hidWifiConnected).publish_state(disableHid ? false : bool(id(wifiConnected).state));
           id(hidReplaceFilter).publish_state(disableHid ? false : bool(id(replaceFilter).state));
 
@@ -554,31 +611,42 @@ script:
     then:
       - if:
           condition:
-            lambda: "return id(devEnabled).state;"
+            lambda: |-
+              return id(devEnabled).state;
           then:
             - lambda: |-
                 auto mode = id(devMode).state;
                 auto favSpeed = id(motorSpeedFav).state;
+                float motorSetpoint = 0; // 0-100
                 if (mode == "AUTO") {
                   if(id(pm25sensor).has_state()){
                     auto x = id(pm25sensor).state; // range 1-600
                     float speed = x * id(motorSpeedP).state;
-                    id(motorSpeed).publish_state(std::clamp(speed, 0.0f, 100.0f));
+                    motorSetpoint = std::clamp(speed, 0.0f, 100.0f);
                   }else{
-                    id(motorSpeed).publish_state(favSpeed);
+                    motorSetpoint = favSpeed;
                   }
                 } else if (mode == "FAV") {
-                  id(motorSpeed).publish_state(favSpeed);
+                  motorSetpoint = favSpeed;
                 } else {
-                  id(motorSpeed).publish_state(id(motorSpeedNight).state);
+                  motorSetpoint = id(motorSpeedNight).state;
                 }
-                
-            - switch.turn_on: motorEn
+                auto motorFreq = motorSetpoint*4.12 + 100; // scale range 0-100 to 100-512Hz
+                ESP_LOGD("motor", "setpoint=%f, freq=%f", motorSetpoint, motorFreq);
+                auto motor = id(motorPwmOutput);
+                motor->turn_on();                
+                motor->update_frequency(motorFreq);
+                motor->set_level(0.5); 
           else:
-            - number.set:
-                id: motorSpeed
-                value: 0
-            - switch.turn_off: motorEn      
+            - output.turn_off: motorPwmOutput
+  - id: childLockNotification
+    then:
+      - rtttl.play: "ignore:d=16,o=5,b=100:c6"
+      - repeat:
+          count: 4
+          then:
+            - lambda: "id(hidChildLock).publish_state(!id(hidChildLock).state);"
+            - delay: 300ms
 
 rtttl:
   output: buzzer
@@ -588,10 +656,15 @@ rtttl:
 button:
   - platform: restart
     name: "Restart"
-  - platform: template
-    name: "On/Off Button"
-    icon: mdi:power
-    on_press:
-      - lambda: |-
-          auto enabled = id(devEnabled).state;
-          id(devEnabled).publish_state(!enabled);  
+  - platform: template    
+    name: "Reset Filter"
+    on_press: 
+      then:
+        - globals.set: 
+            id: filterUsageState
+            value: "0"
+        - lambda: |-
+            id(filterUsage).update(); 
+            id(replaceFilter).loop();
+            
+            
