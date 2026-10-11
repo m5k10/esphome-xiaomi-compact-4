@@ -1,4 +1,6 @@
 esphome:
+  includes:
+    - <deque>
   on_boot: 
     then:
       - switch.turn_on: motorEn
@@ -207,7 +209,7 @@ binary_sensor:
                       - select.next: devMode
                       - if:
                           condition:
-                            lambda: "return id(brightness).state == \"ZERO\";"
+                            lambda: "return id(brightness).current_option() == \"ZERO\";"
                           then:
                             - select.set:
                                 id: brightness
@@ -559,7 +561,7 @@ script:
     then:
       - lambda: |-
           ESP_LOGD("script", "Update HID");
-          std::string brightnessMode = id(brightness).state;
+          std::string brightnessMode = id(brightness).current_option();
           bool isDevEnabled = id(devEnabled).state;
           bool isFullBacklight = brightnessMode == "FULL";
           bool isNoBacklight = brightnessMode == "ZERO";
@@ -575,7 +577,7 @@ script:
           id(hidBacklightModeChangeButton).publish_state(!disableHid);
           id(hidBacklightBrightnessChangeButton).publish_state(!disableHid);
           id(hidBacklightOnOffButton).publish_state(true);
-          id(hidMode).make_call().set_option(disableHid ? "TURNOFF" : id(devMode).state ).perform();
+          id(hidMode).make_call().set_option(disableHid ? "TURNOFF" : id(devMode).current_option().str() ).perform();
           id(hidChildLock).publish_state(bool(id(childLock).state));
           id(hidWifiConnected).publish_state(disableHid ? false : bool(id(wifiConnected).state));
           id(hidReplaceFilter).publish_state(disableHid ? false : bool(id(replaceFilter).state));
@@ -615,7 +617,7 @@ script:
               return id(devEnabled).state;
           then:
             - lambda: |-
-                auto mode = id(devMode).state;
+                auto mode = id(devMode).current_option();
                 auto favSpeed = id(motorSpeedFav).state;
                 float motorSetpoint = 0; // 0-100
                 if (mode == "AUTO") {
